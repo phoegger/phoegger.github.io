@@ -40,12 +40,12 @@ footer{max-width:1220px;margin:0 auto;padding:0 18px 28px;color:var(--muted);fon
 .year-compare-legend{display:flex;gap:18px;flex-wrap:wrap;margin:0 0 14px;color:var(--muted);font-size:13px}
 .year-compare-legend span{display:inline-flex;gap:7px;align-items:center}
 .year-compare-legend i{width:12px;height:12px;border-radius:3px;display:inline-block}
-.legend-solo{background:#174d83}.legend-family{background:#f0b323}
+.legend-solo{background:#174d83}.legend-family{background:#f0b323}.legend-unassigned{background:#96a2b3}
 .year-compare-row{display:grid;grid-template-columns:64px minmax(100px,1fr) 120px;gap:12px;align-items:center;margin:12px 0}
 .year-compare-year{font-weight:750;color:var(--navy)}
 .year-compare-track{height:16px;background:#edf1f6;border-radius:20px;overflow:hidden;display:flex}
 .year-compare-solo{height:100%;background:#174d83}
-.year-compare-family{height:100%;background:#f0b323}
+.year-compare-family{height:100%;background:#f0b323}.year-compare-unassigned{height:100%;background:#96a2b3}
 .year-compare-total{text-align:right;font-variant-numeric:tabular-nums;font-weight:700;white-space:nowrap}
 @media(max-width:620px){.year-compare-row{grid-template-columns:48px minmax(60px,1fr) 92px;gap:7px;font-size:13px}}
 @media(max-width:780px){.upload-grid{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,1fr)}.split{grid-template-columns:1fr}.toolbar .push{margin-left:0}.brand h1{font-size:20px}}
@@ -79,7 +79,7 @@ footer{max-width:1220px;margin:0 auto;padding:0 18px 28px;color:var(--muted);fon
 <div class="field"><label for="teamFilter">Team</label><select id="teamFilter"><option value="">Alle Teams</option></select></div>
 <div class="field"><label for="totalFilter">Gesamt</label><select id="totalFilter"><option value="all">Alle Beträge</option><option value="zero">Gesamt = 0</option><option value="positive">Gesamt &gt; 0</option></select></div>
 <div class="field"><label for="search">Suche</label><input id="search" type="search" placeholder="Name oder Team"></div>
-<button class="secondary" id="csvBtn">Rangliste exportieren (CSV)</button><button class="secondary" id="lockDashboardBtn" type="button">Abmelden / Ansicht sperren</button>
+<button class="secondary" id="csvBtn">Rangliste exportieren (CSV)</button><button class="secondary" id="refreshDataBtn" type="button">Daten aktualisieren</button><button class="secondary" id="lockDashboardBtn" type="button">Abmelden / Ansicht sperren</button>
 </div>
 </section>
 <div class="cards" id="stats"></div><div id="unassignedCashNotice" class="panel" style="display:none;padding:12px 16px;border-left:4px solid var(--gold)"></div>
@@ -100,7 +100,7 @@ footer{max-width:1220px;margin:0 auto;padding:0 18px 28px;color:var(--muted);fon
  <div class="cards" id="yearCompareStats"></div>
  <section class="panel">
   <div class="section-head"><h2>Gesamtsammlung je Jahr</h2><span class="muted">Einzelpersonen + Familien · CHF</span></div>
-  <div class="year-compare-legend"><span><i class="legend-solo"></i> Einzelpersonen</span><span><i class="legend-family"></i> Familien</span></div>
+  <div class="year-compare-legend"><span><i class="legend-solo"></i> Einzelpersonen</span><span><i class="legend-family"></i> Familien</span><span><i class="legend-unassigned"></i> Cash ohne Teilnehmer-ID</span></div>
   <div id="yearCompareChart"></div>
  </section>
  <section class="panel">
@@ -108,7 +108,22 @@ footer{max-width:1220px;margin:0 auto;padding:0 18px 28px;color:var(--muted);fon
   <div class="table-wrap" id="yearCompareTable"></div>
  </section>
  <section class="panel">
-  <div class="section-head"><h2>Einzelne Läufer</h2><span class="muted">Alle Jahre · Beträge in CHF</span></div>
+  <div class="section-head"><h2>Total pro Teilnehmer und Jahr</h2>
+   <div class="toolbar">
+    <div class="field" style="min-width:210px">
+     <label for="yearCompareFilter">Anzeigen</label>
+     <select id="yearCompareFilter">
+      <option value="all">Alle</option>
+      <option value="individual">Einzelpersonen</option>
+      <option value="family">Familien</option>
+     </select>
+    </div>
+    <div class="field" style="min-width:230px">
+     <label for="yearCompareSearch">Teilnehmer suchen</label>
+     <input id="yearCompareSearch" type="search" placeholder="Name oder Familie">
+    </div>
+   </div>
+  </div>
   <div class="table-wrap" id="yearCompareRunnersTable"></div>
  </section>
 </section>
@@ -352,31 +367,37 @@ function renderYearComparison(){
  const chartHost=document.getElementById('yearCompareChart');
  const tableHost=document.getElementById('yearCompareTable');
  const runnersHost=document.getElementById('yearCompareRunnersTable');
- if(!statsHost||!chartHost||!tableHost||!runnersHost)return;
+ const filter=document.getElementById('yearCompareFilter');
+ if(!statsHost||!chartHost||!tableHost||!runnersHost||!filter)return;
+
  const yearList=Object.keys(years).sort((a,b)=>Number(a)-Number(b));
  const rows=yearList.map(year=>{
-  const people=(Array.isArray(years[year])?years[year]:[])
-   .filter(p=>!p.unassignedCash).map(p=>calc({...p}));
+  const allRows=Array.isArray(years[year])?years[year]:[];
+  const people=allRows.filter(p=>!p.unassignedCash).map(p=>calc({...p}));
   const families=makeFamilies(people);
   const familyKeys=new Set(families.map(f=>norm(f.label)));
   const familyMembers=people.filter(p=>familyKeys.has(norm(p.familyKey)));
   const solo=people.filter(p=>!familyKeys.has(norm(p.familyKey)));
-  const total=people.reduce((sum,p)=>sum+amount(p.gross),0);
+  const participantTotal=people.reduce((sum,p)=>sum+amount(p.gross),0);
+  const unassignedCash=allRows.filter(p=>p.unassignedCash).reduce((sum,p)=>sum+amount(p.cash),0);
+  const total=participantTotal+unassignedCash;
   const familyTotal=families.reduce((sum,f)=>sum+amount(f.gross),0);
   const soloTotal=solo.reduce((sum,p)=>sum+amount(p.gross),0);
-  return {year,total,participantCount:people.length,
-   avgRunner:people.length?total/people.length:0,
+  return {year,total,participantTotal,unassignedCash,participantCount:people.length,
+   avgRunner:people.length?participantTotal/people.length:0,
    soloCount:solo.length,soloTotal,avgSolo:solo.length?soloTotal/solo.length:0,
    familyCount:families.length,familyMemberCount:familyMembers.length,
    familyTotal,avgFamily:families.length?familyTotal/families.length:0};
  });
+
  if(!rows.length){
   statsHost.innerHTML='<div class="panel empty">Nach der Anmeldung sind noch keine Jahresdaten in Supabase vorhanden.</div>';
   chartHost.innerHTML='<div class="empty">Keine Jahresdaten vorhanden.</div>';
   tableHost.innerHTML='<div class="empty">Keine Jahresdaten vorhanden.</div>';
-  runnersHost.innerHTML='<div class="empty">Keine Läuferdaten vorhanden.</div>';
+  runnersHost.innerHTML='<div class="empty">Keine Teilnehmerdaten vorhanden.</div>';
   return;
  }
+
  const latest=rows[rows.length-1],previous=rows.length>1?rows[rows.length-2]:null;
  const delta=(value,prior)=>{
   if(!previous||prior===undefined||prior===null||prior===0)return 'Kein Vorjahresvergleich';
@@ -389,60 +410,78 @@ function renderYearComparison(){
   {label:'Durchschnitt pro Läufer',value:currency(latest.avgRunner),delta:delta(latest.avgRunner,previous?.avgRunner)},
   {label:'Durchschnitt pro Familie',value:latest.familyCount?currency(latest.avgFamily):'—',delta:latest.familyCount?delta(latest.avgFamily,previous?.avgFamily):'Keine Familiengruppen'}
  ].map(x=>`<div class="stat"><span class="label">${esc(x.label)}</span><strong>${esc(x.value)}</strong><small>${esc(x.delta)}</small></div>`).join('');
+
  const maxTotal=Math.max(1,...rows.map(r=>r.total));
  chartHost.innerHTML=rows.map(r=>{
   const soloWidth=Math.max(0,r.soloTotal/maxTotal*100);
   const familyWidth=Math.max(0,r.familyTotal/maxTotal*100);
+  const unassignedWidth=Math.max(0,r.unassignedCash/maxTotal*100);
   return `<div class="year-compare-row"><span class="year-compare-year">${esc(r.year)}</span>
-   <div class="year-compare-track" role="img" aria-label="${esc(r.year)}: ${esc(currency(r.soloTotal))} Einzelpersonen, ${esc(currency(r.familyTotal))} Familien">
-    <span class="year-compare-solo" style="width:${soloWidth}%"></span><span class="year-compare-family" style="width:${familyWidth}%"></span>
+   <div class="year-compare-track" role="img" aria-label="${esc(r.year)}: ${esc(currency(r.soloTotal))} Einzelpersonen, ${esc(currency(r.familyTotal))} Familien, ${esc(currency(r.unassignedCash))} Cash ohne Teilnehmer-ID">
+    <span class="year-compare-solo" style="width:${soloWidth}%"></span><span class="year-compare-family" style="width:${familyWidth}%"></span><span class="year-compare-unassigned" style="width:${unassignedWidth}%"></span>
    </div><span class="year-compare-total">${esc(currency(r.total))}</span></div>`;
  }).join('');
- const cols=['Jahr','Gesamt','Teilnehmende','Ø pro Läufer','Einzelpersonen','Betrag Einzelpersonen','Ø pro Einzelperson','Familien','Familienmitglieder','Betrag Familien','Ø pro Familie'];
+
+ const cols=['Jahr','Gesamt','Cash ohne Teilnehmer-ID','Teilnehmende','Ø pro Läufer','Einzelpersonen','Betrag Einzelpersonen','Ø pro Einzelperson','Familien','Familienmitglieder','Betrag Familien','Ø pro Familie'];
  tableHost.innerHTML=`<table><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${rows.slice().reverse().map(r=>`<tr>
   <td><b>${esc(r.year)}</b></td><td class="num"><b>${esc(currency(r.total))}</b></td>
-  <td class="num">${r.participantCount}</td><td class="num">${esc(currency(r.avgRunner))}</td>
+  <td class="num">${esc(currency(r.unassignedCash))}</td><td class="num">${r.participantCount}</td><td class="num">${esc(currency(r.avgRunner))}</td>
   <td class="num">${r.soloCount}</td><td class="num">${esc(currency(r.soloTotal))}</td>
   <td class="num">${r.soloCount?esc(currency(r.avgSolo)):'—'}</td><td class="num">${r.familyCount}</td>
   <td class="num">${r.familyMemberCount}</td><td class="num">${esc(currency(r.familyTotal))}</td>
   <td class="num">${r.familyCount?esc(currency(r.avgFamily)):'—'}</td>
  </tr>`).join('')}</tbody></table>`;
 
- const runnerRows=[];
+ const mode=filter.value||'all';
+ const entities=new Map();
  for(const year of yearList){
-  const people=(Array.isArray(years[year])?years[year]:[])
-   .filter(p=>!p.unassignedCash)
-   .map(p=>calc({...p}));
-  const familyKeys=new Set(makeFamilies(people).map(f=>norm(f.label)));
-  for(const person of people){
-   const key=String(person.familyKey||'').trim();
-   const isFamily=!!key&&norm(key)!=='einzel'&&familyKeys.has(norm(key));
-   runnerRows.push({
-    year,
-    name:`${person.first||''} ${person.last||''}`.trim()||'—',
-    group:person.group||'—',
-    family:isFamily?key:'—',
-    cash:amount(person.cash),
-    flat:amount(person.flat),
-    rounds:amount(person.rounds),
-    unit:amount(person.unit),
-    roundValue:amount(person.roundValue),
-    gross:amount(person.gross)
+  const allRows=Array.isArray(years[year])?years[year]:[];
+  const people=allRows.filter(p=>!p.unassignedCash).map(p=>calc({...p}));
+  const familyRows=makeFamilies(people);
+  let items=[];
+  if(mode==='family'){
+   items=familyRows.map(f=>({key:'family:'+norm(f.label),label:f.label,type:'Familie',gross:amount(f.gross)}));
+  }else if(mode==='individual'){
+   items=people.map(p=>{
+    const name=`${p.first||''} ${p.last||''}`.trim()||'Unbekannt';
+    return {key:'person:'+norm(name),label:name,type:'Einzelperson',gross:amount(p.gross)};
+   });
+  }else{
+   items=combinedRanking(people,familyRows).map(item=>{
+    const isFamily=Number(item.people||1)>1;
+    const label=String(item.label||'').trim()||'Unbekannt';
+    return {key:(isFamily?'family:':'person:')+norm(label),label,type:isFamily?'Familie':'Einzelperson',gross:amount(item.gross)};
    });
   }
- }
- runnerRows.sort((a,b)=>Number(b.year)-Number(a.year)||b.gross-a.gross||a.name.localeCompare(b.name,'de'));
- const runnerCols=['Jahr','Läufer','Team','Familie','Cash','Pauschal','Runden','Beitrag/Runde','Rundenbeitrag','Total'];
- runnersHost.innerHTML=runnerRows.length
-  ? `<table><thead><tr>${runnerCols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${runnerRows.map(r=>`<tr>
-    <td><b>${esc(r.year)}</b></td><td class="name">${esc(r.name)}</td><td>${esc(r.group)}</td><td>${esc(r.family)}</td>
-    <td class="num">${esc(currency(r.cash))}</td><td class="num">${esc(currency(r.flat))}</td>
-    <td class="num">${r.rounds.toLocaleString('de-CH')}</td><td class="num">${esc(currency(r.unit))}</td>
-    <td class="num">${esc(currency(r.roundValue))}</td><td class="num"><b>${esc(currency(r.gross))}</b></td>
-   </tr>`).join('')}</tbody></table>`
-  : '<div class="empty">Keine Läuferdaten vorhanden.</div>';
-}
+  if(mode==='all'){
+   const unassignedCash=allRows.filter(p=>p.unassignedCash).reduce((sum,p)=>sum+amount(p.cash),0);
+   if(Math.abs(unassignedCash)>0.0001){
+    items.push({key:'unassigned-cash',label:'Cash ohne Teilnehmer-ID',type:'Ohne ID',gross:unassignedCash});
+   }
+  }
 
+  const seenThisYear=new Set();
+  items.forEach(item=>{
+   if(!entities.has(item.key))entities.set(item.key,{key:item.key,label:item.label,type:item.type,totals:{}});
+   const entity=entities.get(item.key);
+   entity.totals[year]=(entity.totals[year]||0)+item.gross;
+   seenThisYear.add(item.key);
+  });
+ }
+
+ const searchTerm=norm(document.getElementById('yearCompareSearch')?.value||'');
+ const entityRows=[...entities.values()]
+  .filter(entity=>!searchTerm||norm(entity.label).includes(searchTerm))
+  .sort((a,b)=>a.type.localeCompare(b.type,'de')||a.label.localeCompare(b.label,'de'));
+ const headers=['Teilnehmer / Familie',...yearList];
+ runnersHost.innerHTML=entityRows.length
+  ? `<table><thead><tr>${headers.map((h,i)=>`<th${i?' class="num"':''}>${esc(h)}</th>`).join('')}</tr></thead><tbody>${entityRows.map(entity=>
+    `<tr><td><span class="name">${esc(entity.label)}</span>${mode==='all'?` <span class="tag">${esc(entity.type)}</span>`:''}</td>${
+     yearList.map(year=>`<td class="num"><b>${entity.totals[year]===undefined?'—':esc(currency(entity.totals[year]))}</b></td>`).join('')
+    }</tr>`
+   ).join('')}</tbody></table>`
+  : `<div class="empty">${searchTerm?'Keine passenden Teilnehmer oder Familien gefunden.':'Keine passenden Teilnehmer- oder Familiendaten vorhanden.'}</div>`;
+}
 function configureRoleTabs(){
  const comparisonTab=document.getElementById('tabButtonComparison');
  const importTab=document.getElementById('tabButtonImport');
@@ -632,6 +671,25 @@ document.getElementById('yearFilter').onchange=()=>{
  }
 };
 document.getElementById('search').oninput=render;
+document.getElementById('yearCompareFilter').onchange=renderYearComparison;
+document.getElementById('yearCompareSearch').oninput=renderYearComparison;
+document.getElementById('refreshDataBtn').onclick=async()=>{
+ const button=document.getElementById('refreshDataBtn');
+ if(!currentUser){setViewStatus('Bitte zuerst bei Supabase anmelden.','error');return}
+ button.disabled=true;
+ const oldLabel=button.textContent;
+ button.textContent='Aktualisiere…';
+ setViewStatus('Daten werden aus Supabase aktualisiert…');
+ try{
+  await loadCloudYears();
+  setViewStatus(`Daten aus Supabase aktualisiert: ${Object.keys(years).length} Jahr/Jahre geladen.`,'success');
+ }catch(e){
+  setViewStatus('Aktualisieren fehlgeschlagen: '+e.message,'error');
+ }finally{
+  button.disabled=false;
+  button.textContent=oldLabel;
+ }
+};
 renderYearOptions();
 </script>
 </body></html>
